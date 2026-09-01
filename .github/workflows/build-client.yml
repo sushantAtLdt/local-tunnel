@@ -34,14 +34,17 @@ jobs:
             os: macos-latest
             wails_platform: darwin/universal
             artifact_name: localtunnel-macos-universal.zip
+            build_flags: -clean
           - name: Windows x64
             os: windows-latest
             wails_platform: windows/amd64
             artifact_name: localtunnel-windows-amd64.zip
+            build_flags: -clean
           - name: Linux x64
-            os: ubuntu-latest
+            os: ubuntu-22.04
             wails_platform: linux/amd64
             artifact_name: localtunnel-linux-amd64.tar.gz
+            build_flags: -clean
 
     steps:
       - name: Checkout repository
@@ -62,11 +65,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev || sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
 
       - name: Install Wails CLI
+        shell: bash
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.2
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
           if [ "${{ runner.os }}" = "macOS" ]; then
             codesign -s - $(go env GOPATH)/bin/wails || true
           fi
@@ -77,24 +82,31 @@ jobs:
 
       - name: Build client application
         working-directory: client
-        run: wails build -platform ${{ matrix.platform.wails_platform }} -clean
+        run: wails build -platform ${{ matrix.platform.wails_platform }} ${{ matrix.platform.build_flags }}
 
-      - name: Package binary
+      - name: Package macOS binary
+        if: runner.os == 'macOS'
         shell: bash
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cd client/build/bin
-            powershell -Command "Compress-Archive -Path localtunnel.exe -DestinationPath localtunnel-windows-amd64.zip"
-            echo "ARTIFACT_PATH=client/build/bin/localtunnel-windows-amd64.zip" >> $GITHUB_ENV
-          elif [ "${{ runner.os }}" = "macOS" ]; then
-            cd client/build/bin
-            zip -r localtunnel-macos-universal.zip localtunnel.app
-            echo "ARTIFACT_PATH=client/build/bin/localtunnel-macos-universal.zip" >> $GITHUB_ENV
-          else
-            cd client/build/bin
-            tar -czvf localtunnel-linux-amd64.tar.gz localtunnel
-            echo "ARTIFACT_PATH=client/build/bin/localtunnel-linux-amd64.tar.gz" >> $GITHUB_ENV
-          fi
+          cd client/build/bin
+          zip -r localtunnel-macos-universal.zip localtunnel.app
+          echo "ARTIFACT_PATH=client/build/bin/localtunnel-macos-universal.zip" >> $GITHUB_ENV
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cd client/build/bin
+          powershell -Command "Compress-Archive -Path localtunnel.exe -DestinationPath localtunnel-windows-amd64.zip"
+          echo "ARTIFACT_PATH=client/build/bin/localtunnel-windows-amd64.zip" >> $GITHUB_ENV
+
+      - name: Package Linux binary
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cd client/build/bin
+          tar -czvf localtunnel-linux-amd64.tar.gz localtunnel
+          echo "ARTIFACT_PATH=client/build/bin/localtunnel-linux-amd64.tar.gz" >> $GITHUB_ENV
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
