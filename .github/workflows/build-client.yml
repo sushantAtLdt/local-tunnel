@@ -89,7 +89,7 @@ jobs:
         shell: bash
         run: |
           cd client/build/bin
-          zip -r localtunnel-macos-universal.zip localtunnel.app
+          zip -r localtunnel-macos-universal.zip *.app
           echo "ARTIFACT_PATH=client/build/bin/localtunnel-macos-universal.zip" >> $GITHUB_ENV
 
       - name: Package Windows binary
