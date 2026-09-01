@@ -168,7 +168,19 @@ If you skip the wildcard DNS/Caddy setup, the relay still works over plain
 HTTP using whatever `Host` header arrives — fine for testing on your LAN or
 via a service like `nip.io`, not fine for a real public HTTPS URL.
 
-## Part 2 — Build the GUI client (on your own machine)
+## Download Pre-built App
+
+You can download pre-built packages for your operating system from the **[GitHub Releases](https://github.com/sushantAtLdt/local-tunnel/releases)** page:
+
+| Platform | Package | Description |
+| :--- | :--- | :--- |
+| **macOS** | [localtunnel-macos-universal.zip](https://github.com/sushantAtLdt/local-tunnel/releases/latest/download/localtunnel-macos-universal.zip) | Universal bundle (Apple Silicon & Intel) |
+| **Windows** | [localtunnel-windows-amd64.zip](https://github.com/sushantAtLdt/local-tunnel/releases/latest/download/localtunnel-windows-amd64.zip) | 64-bit Windows `.exe` |
+| **Linux** | [localtunnel-linux-amd64.tar.gz](https://github.com/sushantAtLdt/local-tunnel/releases/latest/download/localtunnel-linux-amd64.tar.gz) | 64-bit Linux binary |
+
+---
+
+## Part 2 — Build the GUI client from source (optional)
 
 You need to build this **on the OS you'll run it on** — Wails apps use the
 native OS webview, so cross-compiling a GUI binary from Linux to macOS/
