@@ -1,0 +1,123 @@
+name: Build Client
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'client/**'
+      - '.github/workflows/build-client.yml'
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'client/**'
+      - '.github/workflows/build-client.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Client (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: macOS Universal
+            os: macos-latest
+            wails_platform: darwin/universal
+            artifact_name: localtunnel-macos-universal.zip
+          - name: Windows x64
+            os: windows-latest
+            wails_platform: windows/amd64
+            artifact_name: localtunnel-windows-amd64.zip
+          - name: Linux x64
+            os: ubuntu-latest
+            wails_platform: linux/amd64
+            artifact_name: localtunnel-linux-amd64.tar.gz
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          check-latest: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev || sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.2
+
+      - name: Prepare Go modules
+        working-directory: client
+        run: go mod tidy
+
+      - name: Build client application
+        working-directory: client
+        run: wails build -platform ${{ matrix.platform.wails_platform }} -clean
+
+      - name: Package binary
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cd client/build/bin
+            powershell -Command "Compress-Archive -Path localtunnel.exe -DestinationPath localtunnel-windows-amd64.zip"
+            echo "ARTIFACT_PATH=client/build/bin/localtunnel-windows-amd64.zip" >> $GITHUB_ENV
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            cd client/build/bin
+            zip -r localtunnel-macos-universal.zip localtunnel.app
+            echo "ARTIFACT_PATH=client/build/bin/localtunnel-macos-universal.zip" >> $GITHUB_ENV
+          else
+            cd client/build/bin
+            tar -czvf localtunnel-linux-amd64.tar.gz localtunnel
+            echo "ARTIFACT_PATH=client/build/bin/localtunnel-linux-amd64.tar.gz" >> $GITHUB_ENV
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.artifact_name }}
+          path: ${{ env.ARTIFACT_PATH }}
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
