@@ -1,0 +1,12 @@
+services:
+  relay:
+    build: .
+    image: localtunnel-relay
+    container_name: localtunnel-relay
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # public HTTP traffic — put Caddy/nginx in front for HTTPS
+      - "7000:7000"   # tunnel client control connections — firewall this to trusted IPs if possible
+    command: ["-public", ":8080", "-control", ":7000"]
+    # To enable subdomain routing once you've set up wildcard DNS:
+    # command: ["-public", ":8080", "-control", ":7000", "-domain", "tunnel.yourdomain.com"]

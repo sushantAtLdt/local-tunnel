@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>LocalTunnel</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="panel">
+    <header>
+      <h1>LocalTunnel</h1>
+    </header>
+
+    <label for="localTarget">Local app address <span class="hint">(shared by both modes below)</span></label>
+    <input id="localTarget" value="http://127.0.0.1:3000" />
+
+    <!-- LOCAL NETWORK MODE -->
+    <section class="mode-card">
+      <div class="mode-head">
+        <div class="dot" id="lanDot"></div>
+        <h2>Local network</h2>
+        <span class="mode-sub">no internet or relay needed</span>
+      </div>
+
+      <label for="lanPort">Port to share on</label>
+      <input id="lanPort" value="9090" />
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="lanCors" />
+        <span>Add permissive CORS headers</span>
+      </label>
+
+      <button id="lanBtn">Share on local network</button>
+
+      <section id="lanUrlBox" class="url-box hidden">
+        <span class="url-label">Reachable on your WiFi/network at</span>
+        <code id="lanUrl">—</code>
+      </section>
+    </section>
+
+    <!-- PUBLIC INTERNET MODE -->
+    <section class="mode-card">
+      <div class="mode-head">
+        <div class="dot" id="pubDot"></div>
+        <h2>Public internet</h2>
+        <span class="mode-sub">via your relay server</span>
+      </div>
+
+      <label for="relayAddr">Relay address</label>
+      <input id="relayAddr" placeholder="1.2.3.4:7000" value="127.0.0.1:7000" />
+
+      <label for="subdomain">Subdomain <span class="hint">(optional)</span></label>
+      <input id="subdomain" placeholder="leave blank for a random one" />
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="pubCors" />
+        <span>Add permissive CORS headers</span>
+      </label>
+
+      <button id="pubBtn">Start public tunnel</button>
+
+      <section id="pubUrlBox" class="url-box hidden">
+        <span class="url-label">Public tunnel</span>
+        <code id="pubUrl">—</code>
+      </section>
+    </section>
+
+    <section class="log-header">Activity</section>
+    <div id="log" class="log"></div>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
