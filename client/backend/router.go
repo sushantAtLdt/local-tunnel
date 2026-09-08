@@ -164,16 +164,29 @@ func (rt *RouteTable) Match(reqPath string) (*Route, string) {
 	return nil, reqPath
 }
 
-// CreateGatewayHandler returns a unified HTTP handler for the RouteTable with CORS support.
+// CreateGatewayHandler returns a unified HTTP handler for the RouteTable with comprehensive CORS support.
 func CreateGatewayHandler(rt *RouteTable, injectCORS bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if injectCORS {
-			origin := r.Header.Get("Origin")
-			if origin == "" {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = r.Header.Get("Referer")
+			if origin != "" {
+				if u, err := url.Parse(origin); err == nil && u.Host != "" {
+					origin = u.Scheme + "://" + u.Host
+				} else {
+					origin = "*"
+				}
+			} else {
 				origin = "*"
 			}
+		}
+
+		if injectCORS {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD")
+			if origin != "*" {
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
 
 			reqHeaders := r.Header.Get("Access-Control-Request-Headers")
 			if reqHeaders != "" {
@@ -191,11 +204,39 @@ func CreateGatewayHandler(rt *RouteTable, injectCORS bool) http.Handler {
 		}
 
 		route, _ := rt.Match(r.URL.Path)
-		if route == nil || route.Proxy == nil {
-			http.Error(w, "no matching backend route found", http.StatusBadGateway)
+		if route == nil || route.Target == nil {
+			if injectCORS {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			}
+			http.Error(w, fmt.Sprintf("no matching backend route found for path %q", r.URL.Path), http.StatusBadGateway)
 			return
 		}
 
-		route.Proxy.ServeHTTP(w, r)
+		// Create a dynamic proxy instance with response & error modifiers
+		proxy := httputil.NewSingleHostReverseProxy(route.Target)
+		if injectCORS {
+			proxy.ModifyResponse = func(resp *http.Response) error {
+				resp.Header.Set("Access-Control-Allow-Origin", origin)
+				resp.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD")
+				resp.Header.Set("Access-Control-Allow-Headers", "*")
+				resp.Header.Set("Access-Control-Expose-Headers", "*")
+				if origin != "*" {
+					resp.Header.Set("Access-Control-Allow-Credentials", "true")
+				}
+				return nil
+			}
+			proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
+				rw.Header().Set("Access-Control-Allow-Origin", origin)
+				rw.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD")
+				rw.Header().Set("Access-Control-Allow-Headers", "*")
+				rw.Header().Set("Access-Control-Expose-Headers", "*")
+				if origin != "*" {
+					rw.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
+				http.Error(rw, fmt.Sprintf("gateway backend unreachable (%s): %v", route.Target.String(), err), http.StatusBadGateway)
+			}
+		}
+
+		proxy.ServeHTTP(w, r)
 	})
 }

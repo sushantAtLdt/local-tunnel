@@ -167,13 +167,21 @@ func (c *Client) serveLoop(br *bufio.Reader, conn net.Conn, cfg Config, rt *Rout
 }
 
 func (c *Client) handleRequest(e Envelope, cfg Config, rt *RouteTable, send func(Envelope) error) {
+	origin := "*"
+	if vals, ok := e.Headers["Origin"]; ok && len(vals) > 0 && vals[0] != "" {
+		origin = vals[0]
+	}
+
 	if cfg.InjectCORS && strings.EqualFold(e.Method, "OPTIONS") {
 		headers := map[string][]string{
-			"Access-Control-Allow-Origin":   {"*"},
+			"Access-Control-Allow-Origin":   {origin},
 			"Access-Control-Allow-Methods":  {"GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD"},
 			"Access-Control-Allow-Headers":  {"*"},
 			"Access-Control-Expose-Headers": {"*"},
 			"Access-Control-Max-Age":        {"86400"},
+		}
+		if origin != "*" {
+			headers["Access-Control-Allow-Credentials"] = []string{"true"}
 		}
 		c.logf("%s %s -> 204 (CORS preflight handled)", e.Method, e.Path)
 		send(Envelope{
@@ -202,7 +210,17 @@ func (c *Client) handleRequest(e Envelope, cfg Config, rt *RouteTable, send func
 	resp, err := c.httpProxy.Do(req)
 	if err != nil {
 		c.logf("local request failed: %v", err)
-		send(Envelope{Type: "response", ID: e.ID, Status: 502, Body: b64(fmt.Sprintf("local app unreachable: %v", err))})
+		errHeaders := map[string][]string{}
+		if cfg.InjectCORS {
+			errHeaders["Access-Control-Allow-Origin"] = []string{origin}
+			errHeaders["Access-Control-Allow-Methods"] = []string{"GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD"}
+			errHeaders["Access-Control-Allow-Headers"] = []string{"*"}
+			errHeaders["Access-Control-Expose-Headers"] = []string{"*"}
+			if origin != "*" {
+				errHeaders["Access-Control-Allow-Credentials"] = []string{"true"}
+			}
+		}
+		send(Envelope{Type: "response", ID: e.ID, Status: 502, Headers: errHeaders, Body: b64(fmt.Sprintf("local app unreachable: %v", err))})
 		return
 	}
 	defer resp.Body.Close()
@@ -213,11 +231,14 @@ func (c *Client) handleRequest(e Envelope, cfg Config, rt *RouteTable, send func
 		headers[k] = v
 	}
 	if cfg.InjectCORS {
-		headers["Access-Control-Allow-Origin"] = []string{"*"}
+		headers["Access-Control-Allow-Origin"] = []string{origin}
 		headers["Access-Control-Allow-Methods"] = []string{"GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD"}
 		headers["Access-Control-Allow-Headers"] = []string{"*"}
 		headers["Access-Control-Expose-Headers"] = []string{"*"}
 		headers["Access-Control-Max-Age"] = []string{"86400"}
+		if origin != "*" {
+			headers["Access-Control-Allow-Credentials"] = []string{"true"}
+		}
 	}
 
 	c.logf("%s %s -> %d", e.Method, e.Path, resp.StatusCode)
