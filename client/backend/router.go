@@ -294,8 +294,10 @@ func CreateGatewayHandler(rt *RouteTable, injectCORS bool, logger func(string)) 
 
 		if logger != nil {
 			elapsed := time.Since(start).Round(time.Millisecond)
-			logger(fmt.Sprintf("%s %s → %s  %d (%s)",
-				r.Method, r.URL.Path, destURL.String(), sr.status, elapsed))
+			// Pipe-delimited so JS can split() without unicode issues:
+			// REQ|METHOD|PATH|STATUS|UPSTREAM_HOST|DURATION
+			logger(fmt.Sprintf("REQ|%s|%s|%d|%s|%s",
+				r.Method, r.URL.Path, sr.status, destURL.Host, elapsed))
 		}
 	})
 }

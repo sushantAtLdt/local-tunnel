@@ -6,78 +6,118 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="panel">
-    <header>
-      <h1>LocalTunnel</h1>
-    </header>
+  <div class="app">
 
-    <div class="target-header">
-      <label for="localTarget">Local app address / routes <span class="hint">(shared by both modes)</span></label>
-      <button id="toggleGatewayBtn" type="button" class="text-btn">Gateway Mode (Routes)</button>
-    </div>
-    <div id="singleTargetBox">
-      <input id="localTarget" value="http://127.0.0.1:3000" placeholder="http://127.0.0.1:3000" />
-    </div>
-    <div id="gatewayTargetBox" class="hidden">
-      <textarea id="gatewayRoutes" rows="11" placeholder="/dfs-authorization-server  -> http://127.0.0.1:8082&#10;/dfs-login-management      -> http://127.0.0.1:8085&#10;/dfs-user-management       -> http://127.0.0.1:8086&#10;/mfs-user-management       -> http://127.0.0.1:9085&#10;/dfs-otp-management        -> http://127.0.0.1:8084&#10;/contract-management-service -> http://127.0.0.1:8083&#10;/dfs-core                  -> http://127.0.0.1:8800&#10;/escrow-support-service    -> http://127.0.0.1:8092&#10;/escrow-financial-service  -> http://127.0.0.1:8088&#10;/dfs-balance-transfer      -> http://127.0.0.1:9096&#10;/                          -> http://127.0.0.1:3000"></textarea>
-      <div class="gateway-hint">Routes context paths to different ports through a single gateway port.</div>
-    </div>
+    <!-- ── SIDEBAR / CONFIG ───────────────────────────────── -->
+    <aside class="sidebar">
+      <header>
+        <div class="logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          <span>LocalTunnel</span>
+        </div>
+      </header>
 
-    <!-- LOCAL NETWORK MODE -->
-    <section class="mode-card">
-      <div class="mode-head">
-        <div class="dot" id="lanDot"></div>
-        <h2>Local network</h2>
-        <span class="mode-sub">no internet or relay needed</span>
+      <!-- Target / Routes -->
+      <div class="section">
+        <div class="section-head">
+          <span class="section-title">Target</span>
+          <button id="toggleGatewayBtn" type="button" class="pill-btn">Gateway Mode</button>
+        </div>
+        <div id="singleTargetBox">
+          <input id="localTarget" value="http://127.0.0.1:3000" placeholder="http://127.0.0.1:3000" />
+        </div>
+        <div id="gatewayTargetBox" class="hidden">
+          <textarea id="gatewayRoutes" rows="11" placeholder="/dfs-authorization-server  -> http://127.0.0.1:8082&#10;/dfs-login-management      -> http://127.0.0.1:8085&#10;/dfs-user-management       -> http://127.0.0.1:8086&#10;/mfs-user-management       -> http://127.0.0.1:9085&#10;/dfs-otp-management        -> http://127.0.0.1:8084&#10;/contract-management-service -> http://127.0.0.1:8083&#10;/dfs-core                  -> http://127.0.0.1:8800&#10;/escrow-support-service    -> http://127.0.0.1:8092&#10;/escrow-financial-service  -> http://127.0.0.1:8088&#10;/dfs-balance-transfer      -> http://127.0.0.1:9096&#10;/                          -> http://127.0.0.1:3000"></textarea>
+          <p class="hint-text">One route per line: <code>/prefix -> http://host:port</code></p>
+        </div>
       </div>
 
-      <label for="lanPort">Port(s) to share <span class="hint">(e.g. 9090 or 8080-8088)</span></label>
-      <input id="lanPort" placeholder="9090 or 8080-8088" value="9090" />
+      <!-- LAN MODE -->
+      <div class="section mode-card" id="lanCard">
+        <div class="mode-head">
+          <div class="status-dot" id="lanDot"></div>
+          <div>
+            <div class="mode-title">Local Network</div>
+            <div class="mode-sub">no internet or relay needed</div>
+          </div>
+        </div>
 
-      <label class="checkbox-row">
-        <input type="checkbox" id="lanCors" />
-        <span>Add permissive CORS headers</span>
-      </label>
+        <label class="field-label" for="lanPort">Port(s) <span class="muted">(e.g. 9090 or 8080-8088)</span></label>
+        <input id="lanPort" placeholder="9090" value="9090" />
 
-      <button id="lanBtn">Share on local network</button>
+        <label class="toggle-row">
+          <input type="checkbox" id="lanCors" />
+          <span class="toggle-label">Inject CORS headers</span>
+        </label>
 
-      <section id="lanUrlBox" class="url-box hidden">
-        <span class="url-label">Reachable on your WiFi/network at</span>
-        <code id="lanUrl">—</code>
-      </section>
-    </section>
+        <button id="lanBtn" class="action-btn">Share on local network</button>
 
-    <!-- PUBLIC INTERNET MODE -->
-    <section class="mode-card">
-      <div class="mode-head">
-        <div class="dot" id="pubDot"></div>
-        <h2>Public internet</h2>
-        <span class="mode-sub">via your relay server</span>
+        <div id="lanUrlBox" class="url-chip hidden">
+          <span class="url-chip-label">LAN URL</span>
+          <code id="lanUrl">—</code>
+        </div>
       </div>
 
-      <label for="relayAddr">Relay address</label>
-      <input id="relayAddr" placeholder="1.2.3.4:7000" value="127.0.0.1:7000" />
+      <!-- PUBLIC MODE -->
+      <div class="section mode-card" id="pubCard">
+        <div class="mode-head">
+          <div class="status-dot" id="pubDot"></div>
+          <div>
+            <div class="mode-title">Public Internet</div>
+            <div class="mode-sub">via your relay server</div>
+          </div>
+        </div>
 
-      <label for="subdomain">Subdomain <span class="hint">(optional)</span></label>
-      <input id="subdomain" placeholder="leave blank for a random one" />
+        <label class="field-label" for="relayAddr">Relay address</label>
+        <input id="relayAddr" placeholder="1.2.3.4:7000" value="127.0.0.1:7000" />
 
-      <label class="checkbox-row">
-        <input type="checkbox" id="pubCors" />
-        <span>Add permissive CORS headers</span>
-      </label>
+        <label class="field-label" for="subdomain">Subdomain <span class="muted">(optional)</span></label>
+        <input id="subdomain" placeholder="leave blank for random" />
 
-      <button id="pubBtn">Start public tunnel</button>
+        <label class="toggle-row">
+          <input type="checkbox" id="pubCors" />
+          <span class="toggle-label">Inject CORS headers</span>
+        </label>
 
-      <section id="pubUrlBox" class="url-box hidden">
-        <span class="url-label">Public tunnel</span>
-        <code id="pubUrl">—</code>
-      </section>
-    </section>
+        <button id="pubBtn" class="action-btn">Start public tunnel</button>
 
-    <section class="log-header">Activity</section>
-    <div id="log" class="log"></div>
+        <div id="pubUrlBox" class="url-chip hidden">
+          <span class="url-chip-label">Public URL</span>
+          <code id="pubUrl">—</code>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── MAIN / ACTIVITY LOG ────────────────────────────── -->
+    <main class="log-panel">
+      <div class="log-toolbar">
+        <div class="log-toolbar-left">
+          <span class="log-title">Activity</span>
+          <span class="log-count" id="reqCount">0 requests</span>
+        </div>
+        <button class="clear-btn" id="clearBtn">Clear</button>
+      </div>
+
+      <!-- Table header -->
+      <div class="log-table-head">
+        <span class="col-time">Time</span>
+        <span class="col-method">Method</span>
+        <span class="col-path">Path</span>
+        <span class="col-upstream">Upstream</span>
+        <span class="col-status">Status</span>
+        <span class="col-dur">Duration</span>
+      </div>
+
+      <!-- Table body -->
+      <div class="log-table-body" id="log">
+        <div class="log-empty" id="logEmpty">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3a4250" stroke-width="1.5"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+          <span>No requests yet</span>
+        </div>
+      </div>
+    </main>
+
   </div>
-
   <script src="main.js"></script>
 </body>
 </html>
