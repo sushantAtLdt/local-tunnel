@@ -11,8 +11,17 @@
       <h1>LocalTunnel</h1>
     </header>
 
-    <label for="localTarget">Local app address <span class="hint">(shared by both modes below)</span></label>
-    <input id="localTarget" value="http://127.0.0.1:3000" />
+    <div class="target-header">
+      <label for="localTarget">Local app address / routes <span class="hint">(shared by both modes)</span></label>
+      <button id="toggleGatewayBtn" type="button" class="text-btn">Gateway Mode (Routes)</button>
+    </div>
+    <div id="singleTargetBox">
+      <input id="localTarget" value="http://127.0.0.1:3000" placeholder="http://127.0.0.1:3000" />
+    </div>
+    <div id="gatewayTargetBox" class="hidden">
+      <textarea id="gatewayRoutes" rows="5" placeholder="/auth  -> http://127.0.0.1:8084&#10;/login -> http://127.0.0.1:8082&#10;/user  -> http://127.0.0.1:8085&#10;/otp   -> http://127.0.0.1:8800&#10;/core  -> http://127.0.0.1:8083&#10;/      -> http://127.0.0.1:3000"></textarea>
+      <div class="gateway-hint">Routes context paths to different ports through a single gateway port.</div>
+    </div>
 
     <!-- LOCAL NETWORK MODE -->
     <section class="mode-card">

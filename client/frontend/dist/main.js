@@ -1,5 +1,40 @@
 const localTargetInput = document.getElementById("localTarget");
+const toggleGatewayBtn = document.getElementById("toggleGatewayBtn");
+const singleTargetBox = document.getElementById("singleTargetBox");
+const gatewayTargetBox = document.getElementById("gatewayTargetBox");
+const gatewayRoutes = document.getElementById("gatewayRoutes");
 const logEl = document.getElementById("log");
+
+let isGatewayMode = false;
+
+toggleGatewayBtn.addEventListener("click", () => {
+  isGatewayMode = !isGatewayMode;
+  if (isGatewayMode) {
+    singleTargetBox.classList.add("hidden");
+    gatewayTargetBox.classList.remove("hidden");
+    toggleGatewayBtn.textContent = "Single URL Mode";
+    if (!gatewayRoutes.value.trim()) {
+      gatewayRoutes.value = `/auth  -> http://127.0.0.1:8084\n/login -> http://127.0.0.1:8082\n/user  -> http://127.0.0.1:8085\n/otp   -> http://127.0.0.1:8800\n/core  -> http://127.0.0.1:8083\n/      -> http://127.0.0.1:3000`;
+    }
+  } else {
+    singleTargetBox.classList.remove("hidden");
+    gatewayTargetBox.classList.add("hidden");
+    toggleGatewayBtn.textContent = "Gateway Mode (Routes)";
+  }
+});
+
+function getLocalTarget() {
+  if (isGatewayMode) {
+    return gatewayRoutes.value.trim();
+  }
+  return localTargetInput.value.trim();
+}
+
+function setTargetInputsDisabled(disabled) {
+  localTargetInput.disabled = disabled;
+  gatewayRoutes.disabled = disabled;
+  toggleGatewayBtn.disabled = disabled;
+}
 
 function log(line, isErr) {
   const div = document.createElement("div");
@@ -21,10 +56,10 @@ let lanActive = false;
 
 lanBtn.addEventListener("click", async () => {
   if (!lanActive) {
-    const localTarget = localTargetInput.value.trim();
+    const localTarget = getLocalTarget();
     const portSpec = lanPort.value.trim();
     if (!localTarget || !portSpec) {
-      log("local app address and port(s) are both required", true);
+      log("local app address / routes and port(s) are both required", true);
       return;
     }
     lanBtn.disabled = true;
@@ -35,6 +70,7 @@ lanBtn.addEventListener("click", async () => {
       lanBtn.textContent = "Stop sharing";
       lanBtn.classList.add("stop");
       lanPort.disabled = lanCors.disabled = true;
+      setTargetInputsDisabled(true);
       lanUrl.textContent = url;
       lanUrlBox.classList.remove("hidden");
     } catch (err) {
@@ -49,6 +85,7 @@ lanBtn.addEventListener("click", async () => {
     lanBtn.textContent = "Share on local network";
     lanBtn.classList.remove("stop");
     lanPort.disabled = lanCors.disabled = false;
+    if (!pubActive) setTargetInputsDisabled(false);
     lanUrlBox.classList.add("hidden");
   }
 });
@@ -66,10 +103,10 @@ let pubActive = false;
 pubBtn.addEventListener("click", async () => {
   if (!pubActive) {
     const relayAddr = relayInput.value.trim();
-    const localTarget = localTargetInput.value.trim();
+    const localTarget = getLocalTarget();
     const subdomain = subInput.value.trim();
     if (!relayAddr || !localTarget) {
-      log("relay address and local app address are both required", true);
+      log("relay address and local app address / routes are required", true);
       return;
     }
     pubBtn.disabled = true;
@@ -85,6 +122,7 @@ pubBtn.addEventListener("click", async () => {
       pubBtn.textContent = "Stop public tunnel";
       pubBtn.classList.add("stop");
       relayInput.disabled = subInput.disabled = pubCors.disabled = true;
+      setTargetInputsDisabled(true);
       pubUrl.textContent = `subdomain: ${assigned}`;
       pubUrlBox.classList.remove("hidden");
     } catch (err) {
@@ -99,6 +137,7 @@ pubBtn.addEventListener("click", async () => {
     pubBtn.textContent = "Start public tunnel";
     pubBtn.classList.remove("stop");
     relayInput.disabled = subInput.disabled = pubCors.disabled = false;
+    if (!lanActive) setTargetInputsDisabled(false);
     pubUrlBox.classList.add("hidden");
   }
 });

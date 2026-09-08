@@ -48,8 +48,8 @@ func ParsePortSpec(spec string) ([]int, error) {
 			if err1 != nil || err2 != nil || start < 1 || end > 65535 || start > end {
 				return nil, fmt.Errorf("invalid port range %q", part)
 			}
-			if end-start > 100 {
-				return nil, fmt.Errorf("port range too large (maximum 100 ports)")
+			if end-start > 1000 {
+				return nil, fmt.Errorf("port range too large (maximum 1000 ports)")
 			}
 			for p := start; p <= end; p++ {
 				if !seen[p] {
@@ -74,40 +74,8 @@ func ParsePortSpec(spec string) ([]int, error) {
 	return ports, nil
 }
 
-func createProxyHandler(target *url.URL, injectCORS bool) http.Handler {
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	if !injectCORS {
-		return proxy
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
-		}
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD")
-
-		reqHeaders := r.Header.Get("Access-Control-Request-Headers")
-		if reqHeaders != "" {
-			w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
-		} else {
-			w.Header().Set("Access-Control-Allow-Headers", "*")
-		}
-		w.Header().Set("Access-Control-Expose-Headers", "*")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		proxy.ServeHTTP(w, r)
-	})
-}
-
-// Start reverse-proxies 0.0.0.0:portSpec -> localTarget, and returns the URL(s)
-// other devices on the LAN should use.
+// Start reverse-proxies 0.0.0.0:portSpec -> localTarget (supporting context path routing rules),
+// and returns the URL(s) other devices on the LAN should use.
 func (l *LANServer) Start(localTarget string, portSpec string, injectCORS bool) (string, error) {
 	l.mu.Lock()
 	if l.active {
@@ -116,51 +84,80 @@ func (l *LANServer) Start(localTarget string, portSpec string, injectCORS bool) 
 	}
 	l.mu.Unlock()
 
-	target, err := url.Parse(localTarget)
-	if err != nil || target.Host == "" {
-		return "", fmt.Errorf("invalid local app address %q", localTarget)
-	}
-
 	ports, err := ParsePortSpec(portSpec)
 	if err != nil {
 		return "", err
 	}
 
-	var targetHost string
-	var baseTargetPort int
-	if host, portStr, err := net.SplitHostPort(target.Host); err == nil {
-		targetHost = host
-		baseTargetPort, _ = strconv.Atoi(portStr)
-	} else {
-		targetHost = target.Host
-		baseTargetPort = 0
+	rt, err := ParseRouteRules(localTarget)
+	if err != nil {
+		return "", err
 	}
 
 	var listeners []net.Listener
 	var servers []*http.Server
 
-	for i, p := range ports {
-		currentTarget := *target
-		if len(ports) == 1 {
-			currentTarget = *target
-		} else if baseTargetPort > 0 {
-			targetPort := baseTargetPort + i
-			currentTarget.Host = net.JoinHostPort(targetHost, strconv.Itoa(targetPort))
-		} else {
-			currentTarget.Host = net.JoinHostPort(targetHost, strconv.Itoa(p))
-		}
-
+	if len(ports) == 1 {
+		p := ports[0]
 		ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", p))
 		if err != nil {
-			for _, l := range listeners {
-				l.Close()
-			}
 			return "", fmt.Errorf("could not bind port %d: %w", p, err)
 		}
-
-		srv := &http.Server{Handler: createProxyHandler(&currentTarget, injectCORS)}
+		srv := &http.Server{Handler: CreateGatewayHandler(rt, injectCORS)}
 		listeners = append(listeners, ln)
 		servers = append(servers, srv)
+	} else {
+		// Multi-port range mode: if a single default target is provided, offset ports sequentially
+		var baseTarget *url.URL
+		if rt.DefaultRoute != nil {
+			baseTarget = rt.DefaultRoute.Target
+		} else if len(rt.Routes) > 0 {
+			baseTarget = rt.Routes[0].Target
+		}
+
+		var targetHost string
+		var baseTargetPort int
+		if baseTarget != nil {
+			if host, portStr, err := net.SplitHostPort(baseTarget.Host); err == nil {
+				targetHost = host
+				baseTargetPort, _ = strconv.Atoi(portStr)
+			} else {
+				targetHost = baseTarget.Host
+				baseTargetPort = 0
+			}
+		}
+
+		for i, p := range ports {
+			var currentTarget url.URL
+			if baseTarget != nil {
+				currentTarget = *baseTarget
+			}
+			if baseTargetPort > 0 {
+				targetPort := baseTargetPort + i
+				currentTarget.Host = net.JoinHostPort(targetHost, strconv.Itoa(targetPort))
+			} else {
+				currentTarget.Host = net.JoinHostPort(targetHost, strconv.Itoa(p))
+			}
+
+			ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", p))
+			if err != nil {
+				for _, l := range listeners {
+					l.Close()
+				}
+				return "", fmt.Errorf("could not bind port %d: %w", p, err)
+			}
+
+			singleRoute := &RouteTable{
+				DefaultRoute: &Route{
+					Prefix: "/",
+					Target: &currentTarget,
+					Proxy:  httputil.NewSingleHostReverseProxy(&currentTarget),
+				},
+			}
+			srv := &http.Server{Handler: CreateGatewayHandler(singleRoute, injectCORS)}
+			listeners = append(listeners, ln)
+			servers = append(servers, srv)
+		}
 	}
 
 	l.mu.Lock()

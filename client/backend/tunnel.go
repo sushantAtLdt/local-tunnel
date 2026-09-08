@@ -127,14 +127,20 @@ func (c *Client) Start(cfg Config) (string, error) {
 	c.assigned = first.Subdomain
 	c.mu.Unlock()
 
+	rt, err := ParseRouteRules(cfg.LocalTarget)
+	if err != nil {
+		conn.Close()
+		return "", fmt.Errorf("invalid routing rules: %w", err)
+	}
+
 	c.logf("tunnel live: subdomain %q -> %s", first.Subdomain, cfg.LocalTarget)
 
-	go c.serveLoop(br, conn, cfg)
+	go c.serveLoop(br, conn, cfg, rt)
 
 	return first.Subdomain, nil
 }
 
-func (c *Client) serveLoop(br *bufio.Reader, conn net.Conn, cfg Config) {
+func (c *Client) serveLoop(br *bufio.Reader, conn net.Conn, cfg Config, rt *RouteTable) {
 	var writeMu sync.Mutex
 	send := func(e Envelope) error {
 		writeMu.Lock()
@@ -156,18 +162,18 @@ func (c *Client) serveLoop(br *bufio.Reader, conn net.Conn, cfg Config) {
 		if e.Type != "request" {
 			continue
 		}
-		go c.handleRequest(e, cfg, send)
+		go c.handleRequest(e, cfg, rt, send)
 	}
 }
 
-func (c *Client) handleRequest(e Envelope, cfg Config, send func(Envelope) error) {
+func (c *Client) handleRequest(e Envelope, cfg Config, rt *RouteTable, send func(Envelope) error) {
 	if cfg.InjectCORS && strings.EqualFold(e.Method, "OPTIONS") {
 		headers := map[string][]string{
-			"Access-Control-Allow-Origin":  {"*"},
-			"Access-Control-Allow-Methods": {"GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD"},
-			"Access-Control-Allow-Headers": {"*"},
+			"Access-Control-Allow-Origin":   {"*"},
+			"Access-Control-Allow-Methods":  {"GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD"},
+			"Access-Control-Allow-Headers":  {"*"},
 			"Access-Control-Expose-Headers": {"*"},
-			"Access-Control-Max-Age":       {"86400"},
+			"Access-Control-Max-Age":        {"86400"},
 		}
 		c.logf("%s %s -> 204 (CORS preflight handled)", e.Method, e.Path)
 		send(Envelope{
@@ -180,9 +186,9 @@ func (c *Client) handleRequest(e Envelope, cfg Config, send func(Envelope) error
 	}
 
 	bodyBytes, _ := base64.StdEncoding.DecodeString(e.Body)
-	url := strings.TrimRight(cfg.LocalTarget, "/") + e.Path
+	_, destURL := rt.Match(e.Path)
 
-	req, err := http.NewRequest(e.Method, url, strings_NewReader(bodyBytes))
+	req, err := http.NewRequest(e.Method, destURL, strings_NewReader(bodyBytes))
 	if err != nil {
 		send(Envelope{Type: "response", ID: e.ID, Status: 502, Body: b64(fmt.Sprintf("bad request: %v", err))})
 		return
