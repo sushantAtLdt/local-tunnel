@@ -182,22 +182,21 @@ func CreateGatewayHandler(rt *RouteTable, injectCORS bool) http.Handler {
 		}
 
 		if injectCORS {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD")
-			if origin != "*" {
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
-			}
-
-			reqHeaders := r.Header.Get("Access-Control-Request-Headers")
-			if reqHeaders != "" {
-				w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
-			} else {
-				w.Header().Set("Access-Control-Allow-Headers", "*")
-			}
-			w.Header().Set("Access-Control-Expose-Headers", "*")
-			w.Header().Set("Access-Control-Max-Age", "86400")
-
 			if r.Method == http.MethodOptions {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD")
+				if origin != "*" {
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
+
+				reqHeaders := r.Header.Get("Access-Control-Request-Headers")
+				if reqHeaders != "" {
+					w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
+				} else {
+					w.Header().Set("Access-Control-Allow-Headers", "*")
+				}
+				w.Header().Set("Access-Control-Expose-Headers", "*")
+				w.Header().Set("Access-Control-Max-Age", "86400")
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
@@ -207,6 +206,9 @@ func CreateGatewayHandler(rt *RouteTable, injectCORS bool) http.Handler {
 		if route == nil || route.Target == nil {
 			if injectCORS {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
+				if origin != "*" {
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
 			}
 			http.Error(w, fmt.Sprintf("no matching backend route found for path %q", r.URL.Path), http.StatusBadGateway)
 			return
@@ -221,6 +223,14 @@ func CreateGatewayHandler(rt *RouteTable, injectCORS bool) http.Handler {
 		}
 		if injectCORS {
 			proxy.ModifyResponse = func(resp *http.Response) error {
+				// Remove any duplicate or backend-generated CORS headers to prevent browser rejection
+				resp.Header.Del("Access-Control-Allow-Origin")
+				resp.Header.Del("Access-Control-Allow-Methods")
+				resp.Header.Del("Access-Control-Allow-Headers")
+				resp.Header.Del("Access-Control-Allow-Credentials")
+				resp.Header.Del("Access-Control-Expose-Headers")
+				resp.Header.Del("Access-Control-Max-Age")
+
 				resp.Header.Set("Access-Control-Allow-Origin", origin)
 				resp.Header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD")
 				resp.Header.Set("Access-Control-Allow-Headers", "*")

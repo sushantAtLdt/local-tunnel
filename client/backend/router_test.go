@@ -140,6 +140,7 @@ func TestLANServer_ContextPathRoutingGateway(t *testing.T) {
 	req, _ := http.NewRequest("OPTIONS", "http://127.0.0.1:19095/auth/token", nil)
 	req.Header.Set("Origin", "http://localhost:3000")
 	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "authorization, content-type, language")
 	respOpt, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("OPTIONS /auth/token failed: %v", err)
@@ -150,5 +151,28 @@ func TestLANServer_ContextPathRoutingGateway(t *testing.T) {
 	}
 	if respOpt.Header.Get("Access-Control-Allow-Origin") != "http://localhost:3000" {
 		t.Errorf("OPTIONS origin = %q, want 'http://localhost:3000'", respOpt.Header.Get("Access-Control-Allow-Origin"))
+	}
+	if len(respOpt.Header["Access-Control-Allow-Origin"]) != 1 {
+		t.Errorf("OPTIONS has multiple Access-Control-Allow-Origin headers: %v", respOpt.Header["Access-Control-Allow-Origin"])
+	}
+
+	// Test 5: Actual React POST request with Origin & custom headers
+	postReq, _ := http.NewRequest("POST", "http://127.0.0.1:19095/auth/token", nil)
+	postReq.Header.Set("Origin", "http://localhost:3000")
+	postReq.Header.Set("Content-Type", "application/json")
+	postReq.Header.Set("language", "EN")
+	postResp, err := http.DefaultClient.Do(postReq)
+	if err != nil {
+		t.Fatalf("POST /auth/token failed: %v", err)
+	}
+	postResp.Body.Close()
+	if postResp.Header.Get("Access-Control-Allow-Origin") != "http://localhost:3000" {
+		t.Errorf("POST origin = %q, want 'http://localhost:3000'", postResp.Header.Get("Access-Control-Allow-Origin"))
+	}
+	if len(postResp.Header["Access-Control-Allow-Origin"]) != 1 {
+		t.Errorf("POST has duplicate Access-Control-Allow-Origin headers: %v", postResp.Header["Access-Control-Allow-Origin"])
+	}
+	if postResp.Header.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Errorf("POST missing Access-Control-Allow-Credentials: true")
 	}
 }
