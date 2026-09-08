@@ -161,6 +161,24 @@ func (c *Client) serveLoop(br *bufio.Reader, conn net.Conn, cfg Config) {
 }
 
 func (c *Client) handleRequest(e Envelope, cfg Config, send func(Envelope) error) {
+	if cfg.InjectCORS && strings.EqualFold(e.Method, "OPTIONS") {
+		headers := map[string][]string{
+			"Access-Control-Allow-Origin":  {"*"},
+			"Access-Control-Allow-Methods": {"GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD"},
+			"Access-Control-Allow-Headers": {"*"},
+			"Access-Control-Expose-Headers": {"*"},
+			"Access-Control-Max-Age":       {"86400"},
+		}
+		c.logf("%s %s -> 204 (CORS preflight handled)", e.Method, e.Path)
+		send(Envelope{
+			Type:    "response",
+			ID:      e.ID,
+			Status:  204,
+			Headers: headers,
+		})
+		return
+	}
+
 	bodyBytes, _ := base64.StdEncoding.DecodeString(e.Body)
 	url := strings.TrimRight(cfg.LocalTarget, "/") + e.Path
 
@@ -190,8 +208,10 @@ func (c *Client) handleRequest(e Envelope, cfg Config, send func(Envelope) error
 	}
 	if cfg.InjectCORS {
 		headers["Access-Control-Allow-Origin"] = []string{"*"}
-		headers["Access-Control-Allow-Methods"] = []string{"GET, POST, PUT, PATCH, DELETE, OPTIONS"}
+		headers["Access-Control-Allow-Methods"] = []string{"GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD"}
 		headers["Access-Control-Allow-Headers"] = []string{"*"}
+		headers["Access-Control-Expose-Headers"] = []string{"*"}
+		headers["Access-Control-Max-Age"] = []string{"86400"}
 	}
 
 	c.logf("%s %s -> %d", e.Method, e.Path, resp.StatusCode)

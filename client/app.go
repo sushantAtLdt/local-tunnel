@@ -82,9 +82,9 @@ func (a *App) IsActive() bool {
 }
 
 // StartLAN shares localTarget on the local network (no relay, no internet
-// needed) at 0.0.0.0:port. Returns the URL other devices on the same
-// WiFi/network should use.
-func (a *App) StartLAN(localTarget string, port int, injectCORS bool) (string, error) {
+// needed) at 0.0.0.0:portSpec (e.g. "9090", "8080-8088", "8080,8081"). Returns the URL
+// or URL summary other devices on the same WiFi/network should use.
+func (a *App) StartLAN(localTarget string, portSpec string, injectCORS bool) (string, error) {
 	a.mu.Lock()
 	if a.lanActive {
 		a.mu.Unlock()
@@ -96,7 +96,7 @@ func (a *App) StartLAN(localTarget string, port int, injectCORS bool) (string, e
 	lan := a.lan
 	a.mu.Unlock()
 
-	url, err := lan.Start(localTarget, port, injectCORS)
+	url, err := lan.Start(localTarget, portSpec, injectCORS)
 	if err != nil {
 		return "", err
 	}

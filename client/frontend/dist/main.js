@@ -22,14 +22,14 @@ let lanActive = false;
 lanBtn.addEventListener("click", async () => {
   if (!lanActive) {
     const localTarget = localTargetInput.value.trim();
-    const port = parseInt(lanPort.value.trim(), 10);
-    if (!localTarget || !port) {
-      log("local app address and a port are both required", true);
+    const portSpec = lanPort.value.trim();
+    if (!localTarget || !portSpec) {
+      log("local app address and port(s) are both required", true);
       return;
     }
     lanBtn.disabled = true;
     try {
-      const url = await window.go.main.App.StartLAN(localTarget, port, lanCors.checked);
+      const url = await window.go.main.App.StartLAN(localTarget, portSpec, lanCors.checked);
       lanActive = true;
       lanDot.classList.add("live");
       lanBtn.textContent = "Stop sharing";
