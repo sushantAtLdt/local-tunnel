@@ -92,6 +92,9 @@ func (a *App) StartLAN(localTarget string, portSpec string, injectCORS bool) (st
 	}
 	if a.lan == nil {
 		a.lan = backend.NewLAN()
+		a.lan.Log = func(line string) {
+			wailsRuntime.EventsEmit(a.ctx, "log", line)
+		}
 	}
 	lan := a.lan
 	a.mu.Unlock()

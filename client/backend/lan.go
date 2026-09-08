@@ -15,6 +15,7 @@ import (
 )
 
 type LANServer struct {
+	Log       func(string) // called with one-line request summaries; may be nil
 	mu        sync.Mutex
 	servers   []*http.Server
 	listeners []net.Listener
@@ -22,6 +23,12 @@ type LANServer struct {
 }
 
 func NewLAN() *LANServer { return &LANServer{} }
+
+func (l *LANServer) logf(format string, args ...any) {
+	if l.Log != nil {
+		l.Log(fmt.Sprintf(format, args...))
+	}
+}
 
 // ParsePortSpec parses port strings like "9090", "8080-8088", or "8080, 8081, 8082".
 func ParsePortSpec(spec string) ([]int, error) {
@@ -103,7 +110,7 @@ func (l *LANServer) Start(localTarget string, portSpec string, injectCORS bool) 
 		if err != nil {
 			return "", fmt.Errorf("could not bind port %d: %w", p, err)
 		}
-		srv := &http.Server{Handler: CreateGatewayHandler(rt, injectCORS)}
+		srv := &http.Server{Handler: CreateGatewayHandler(rt, injectCORS, l.Log)}
 		listeners = append(listeners, ln)
 		servers = append(servers, srv)
 	} else {
@@ -154,7 +161,7 @@ func (l *LANServer) Start(localTarget string, portSpec string, injectCORS bool) 
 					Proxy:  httputil.NewSingleHostReverseProxy(&currentTarget),
 				},
 			}
-			srv := &http.Server{Handler: CreateGatewayHandler(singleRoute, injectCORS)}
+			srv := &http.Server{Handler: CreateGatewayHandler(singleRoute, injectCORS, l.Log)}
 			listeners = append(listeners, ln)
 			servers = append(servers, srv)
 		}

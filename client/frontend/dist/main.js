@@ -14,7 +14,19 @@ toggleGatewayBtn.addEventListener("click", () => {
     gatewayTargetBox.classList.remove("hidden");
     toggleGatewayBtn.textContent = "Single URL Mode";
     if (!gatewayRoutes.value.trim()) {
-      gatewayRoutes.value = `/auth  -> http://127.0.0.1:8084\n/login -> http://127.0.0.1:8082\n/user  -> http://127.0.0.1:8085\n/otp   -> http://127.0.0.1:8800\n/core  -> http://127.0.0.1:8083\n/      -> http://127.0.0.1:3000`;
+      gatewayRoutes.value = [
+        "/dfs-authorization-server  -> http://127.0.0.1:8082",
+        "/dfs-login-management      -> http://127.0.0.1:8085",
+        "/dfs-user-management       -> http://127.0.0.1:8086",
+        "/mfs-user-management       -> http://127.0.0.1:9085",
+        "/dfs-otp-management        -> http://127.0.0.1:8084",
+        "/contract-management-service -> http://127.0.0.1:8083",
+        "/dfs-core                  -> http://127.0.0.1:8800",
+        "/escrow-support-service    -> http://127.0.0.1:8092",
+        "/escrow-financial-service  -> http://127.0.0.1:8088",
+        "/dfs-balance-transfer      -> http://127.0.0.1:9096",
+        "/                          -> http://127.0.0.1:3000",
+      ].join("\n");
     }
   } else {
     singleTargetBox.classList.remove("hidden");
@@ -36,14 +48,64 @@ function setTargetInputsDisabled(disabled) {
   toggleGatewayBtn.disabled = disabled;
 }
 
+// REQUEST LOG pattern:  "METHOD /path → http://host/path  STATUS (Xms)"
+const REQUEST_RE = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)\s+→\s+(\S+)\s+(\d{3})\s+\(([^)]+)\)$/;
+const METHOD_COLOR = { GET:"#61afef", POST:"#98c379", PUT:"#e5c07b", PATCH:"#e5c07b",
+                       DELETE:"#e06c75", HEAD:"#56b6c2", OPTIONS:"#c678dd" };
+
+function statusClass(code) {
+  const n = parseInt(code, 10);
+  if (n >= 500) return "log-5xx";
+  if (n >= 400) return "log-4xx";
+  if (n >= 300) return "log-3xx";
+  return "log-2xx";
+}
+
 function log(line, isErr) {
   const div = document.createElement("div");
-  const time = new Date().toLocaleTimeString();
-  div.textContent = `[${time}] ${line}`;
-  if (isErr) div.className = "err";
+  div.className = "log-row";
+  const time = new Date().toLocaleTimeString("en-GB", { hour12: false });
+  const ts = document.createElement("span");
+  ts.className = "log-ts";
+  ts.textContent = time;
+  div.appendChild(ts);
+
+  const m = REQUEST_RE.exec(line);
+  if (m && !isErr) {
+    const [, method, path, upstream, status, dur] = m;
+    const mSpan = document.createElement("span");
+    mSpan.className = "log-method";
+    mSpan.style.color = METHOD_COLOR[method] || "#abb2bf";
+    mSpan.textContent = method;
+    const pSpan = document.createElement("span");
+    pSpan.className = "log-path";
+    pSpan.textContent = path;
+    const sep = document.createElement("span");
+    sep.className = "log-sep";
+    sep.textContent = " → ";
+    const uSpan = document.createElement("span");
+    uSpan.className = "log-upstream";
+    uSpan.textContent = upstream;
+    const sSpan = document.createElement("span");
+    sSpan.className = "log-status " + statusClass(status);
+    sSpan.textContent = status;
+    const dSpan = document.createElement("span");
+    dSpan.className = "log-dur";
+    dSpan.textContent = dur;
+    div.append(mSpan, " ", pSpan, sep, uSpan, " ", sSpan, " ", dSpan);
+  } else {
+    const msg = document.createElement("span");
+    msg.className = isErr ? "log-err" : "log-info";
+    msg.textContent = line;
+    div.appendChild(msg);
+  }
+
   logEl.appendChild(div);
+  // Keep at most 500 rows to avoid unbounded growth
+  while (logEl.children.length > 500) logEl.removeChild(logEl.firstChild);
   logEl.scrollTop = logEl.scrollHeight;
 }
+
 
 // ---------- Local network mode ----------
 const lanPort = document.getElementById("lanPort");

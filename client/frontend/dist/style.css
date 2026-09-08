@@ -233,5 +233,74 @@ input:focus, textarea:focus { border-color: var(--accent); }
   line-height: 1.6;
 }
 
-.log div { white-space: pre-wrap; word-break: break-word; }
-.log div.err { color: #e08080; }
+/* ── Log row layout ─────────────────────────────────────────── */
+.log .log-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 1px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.log .log-row:last-child { border-bottom: none; }
+
+.log .log-ts {
+  color: #4a5260;
+  font-size: 10.5px;
+  flex-shrink: 0;
+  min-width: 68px;
+}
+
+.log .log-method {
+  font-weight: 700;
+  font-size: 11px;
+  flex-shrink: 0;
+  min-width: 52px;
+  letter-spacing: 0.3px;
+}
+
+.log .log-path {
+  color: #c9d1d9;
+  font-size: 11.5px;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log .log-sep {
+  color: #4a5260;
+  flex-shrink: 0;
+}
+
+.log .log-upstream {
+  color: #565e6e;
+  font-size: 10.5px;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log .log-status {
+  font-weight: 700;
+  font-size: 11px;
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 3px;
+}
+.log .log-2xx { color: #1a1305; background: #33c07f; }
+.log .log-3xx { color: #1a1305; background: #e5c07b; }
+.log .log-4xx { color: #fff;    background: #d0883c; }
+.log .log-5xx { color: #fff;    background: #e06c75; }
+
+.log .log-dur {
+  color: #4a5260;
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+
+/* System / info / error lines */
+.log .log-info { color: #9aa4ae; }
+.log .log-err  { color: #e08080; }
+

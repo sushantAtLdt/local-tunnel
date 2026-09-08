@@ -2,11 +2,13 @@ package backend
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Route defines a path prefix rule and its corresponding target upstream server.
@@ -164,9 +166,24 @@ func (rt *RouteTable) Match(reqPath string) (*Route, string) {
 	return nil, reqPath
 }
 
-// CreateGatewayHandler returns a unified HTTP handler for the RouteTable with comprehensive CORS support.
-func CreateGatewayHandler(rt *RouteTable, injectCORS bool) http.Handler {
+// statusRecorder wraps http.ResponseWriter to capture the HTTP status code written by the handler.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+// CreateGatewayHandler returns a unified HTTP handler for the RouteTable with comprehensive CORS
+// support. If logger is non-nil it is called after every request with a one-line summary:
+//
+//	→  POST /dfs-core/api/v1/user/login  →  http://127.0.0.1:8800/dfs-core/api/v1/user/login  200 (4ms)
+func CreateGatewayHandler(rt *RouteTable, injectCORS bool, logger func(string)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 		origin := r.Header.Get("Origin")
 		if origin == "" {
 			origin = r.Header.Get("Referer")
@@ -202,7 +219,7 @@ func CreateGatewayHandler(rt *RouteTable, injectCORS bool) http.Handler {
 			}
 		}
 
-		route, _ := rt.Match(r.URL.Path)
+		route, resolvedURL := rt.Match(r.URL.Path)
 		if route == nil || route.Target == nil {
 			if injectCORS {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
@@ -214,12 +231,32 @@ func CreateGatewayHandler(rt *RouteTable, injectCORS bool) http.Handler {
 			return
 		}
 
+		// Parse the fully-resolved destination URL (path already set by Match).
+		destURL, err := url.Parse(resolvedURL)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("invalid resolved URL %q: %v", resolvedURL, err), http.StatusInternalServerError)
+			return
+		}
+
 		// Create a dynamic proxy instance with response & error modifiers
 		proxy := httputil.NewSingleHostReverseProxy(route.Target)
-		originalDirector := proxy.Director
 		proxy.Director = func(req *http.Request) {
-			originalDirector(req)
-			req.Host = route.Target.Host
+			// Preserve the original query string; destURL only carries path.
+			rawQuery := req.URL.RawQuery
+			req.URL.Scheme = destURL.Scheme
+			req.URL.Host = destURL.Host
+			req.URL.Path = destURL.Path
+			req.URL.RawQuery = rawQuery
+			req.Host = destURL.Host
+			// Forward the real client IP (mirrors nginx X-Forwarded-For).
+			if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+				if prior := req.Header.Get("X-Forwarded-For"); prior != "" {
+					clientIP = prior + ", " + clientIP
+				}
+				req.Header.Set("X-Forwarded-For", clientIP)
+			}
+			req.Header.Set("X-Real-IP", req.RemoteAddr)
+			req.Header.Set("X-Forwarded-Proto", "http")
 		}
 		if injectCORS {
 			proxy.ModifyResponse = func(resp *http.Response) error {
@@ -252,6 +289,13 @@ func CreateGatewayHandler(rt *RouteTable, injectCORS bool) http.Handler {
 			}
 		}
 
-		proxy.ServeHTTP(w, r)
+		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		proxy.ServeHTTP(sr, r)
+
+		if logger != nil {
+			elapsed := time.Since(start).Round(time.Millisecond)
+			logger(fmt.Sprintf("%s %s → %s  %d (%s)",
+				r.Method, r.URL.Path, destURL.String(), sr.status, elapsed))
+		}
 	})
 }
