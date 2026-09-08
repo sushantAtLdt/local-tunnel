@@ -214,6 +214,11 @@ func CreateGatewayHandler(rt *RouteTable, injectCORS bool) http.Handler {
 
 		// Create a dynamic proxy instance with response & error modifiers
 		proxy := httputil.NewSingleHostReverseProxy(route.Target)
+		originalDirector := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			originalDirector(req)
+			req.Host = route.Target.Host
+		}
 		if injectCORS {
 			proxy.ModifyResponse = func(resp *http.Response) error {
 				resp.Header.Set("Access-Control-Allow-Origin", origin)
