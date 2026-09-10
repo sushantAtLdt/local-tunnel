@@ -96,13 +96,17 @@
           <input id="relayAddr" placeholder="your-relay.onrender.com or 1.2.3.4:7000" value="127.0.0.1:7000" />
         </div>
         <div class="field">
-          <label for="subdomain">Subdomain <span class="muted">(optional)</span></label>
-          <input id="subdomain" placeholder="leave blank for random" />
+          <label for="relaySecret">Auth key <span class="muted">(from relay logs)</span></label>
+          <input id="relaySecret" type="password" placeholder="static hex key" autocomplete="off" />
         </div>
       </div>
 
       <div class="field-row" style="margin-top:0">
-        <label class="toggle">
+        <div class="field" style="flex:1">
+          <label for="subdomain">Subdomain <span class="muted">(optional)</span></label>
+          <input id="subdomain" placeholder="leave blank for random" />
+        </div>
+        <label class="toggle" style="margin-top:20px">
           <input type="checkbox" id="pubCors" />
           <span>CORS</span>
         </label>

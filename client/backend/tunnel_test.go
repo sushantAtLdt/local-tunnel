@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -134,8 +135,17 @@ func TestClientEndToEnd(t *testing.T) {
 
 	// 3. Start client
 	c := New()
+	var logs []string
+	var logsMu sync.Mutex
+	c.Log = func(line string) {
+		logsMu.Lock()
+		logs = append(logs, line)
+		logsMu.Unlock()
+	}
+
 	assigned, err := c.Start(Config{
 		RelayAddr:   relayServer.URL,
+		Secret:      "test-secret-key",
 		Subdomain:   "testtunnel",
 		LocalTarget: localApp.URL,
 		InjectCORS:  true,
@@ -188,5 +198,19 @@ func TestClientEndToEnd(t *testing.T) {
 	// Verify CORS header was injected
 	if len(respEnv.Headers["Access-Control-Allow-Origin"]) == 0 {
 		t.Fatalf("expected CORS headers to be injected")
+	}
+
+	// Verify structured REQ log line was emitted
+	foundReqLog := false
+	logsMu.Lock()
+	for _, l := range logs {
+		if strings.HasPrefix(l, "REQ|GET|/test-path|200|") {
+			foundReqLog = true
+			break
+		}
+	}
+	logsMu.Unlock()
+	if !foundReqLog {
+		t.Fatalf("expected structured REQ log, got logs: %v", logs)
 	}
 }

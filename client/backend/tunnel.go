@@ -24,6 +24,7 @@ type Envelope struct {
 	ID        string              `json:"id,omitempty"`
 	Subdomain string              `json:"subdomain,omitempty"`
 	URL       string              `json:"url,omitempty"`
+	Secret    string              `json:"secret,omitempty"` // static hex auth key
 	Method    string              `json:"method,omitempty"`
 	Path      string              `json:"path,omitempty"`
 	Headers   map[string][]string `json:"headers,omitempty"`
@@ -96,18 +97,20 @@ func (c *tcpControlConn) Close() error {
 // ── RFC 6455 WebSocket Client Implementation ────────────────────────────────
 
 const (
-	wsOpText   = 0x1
-	wsOpBinary = 0x2
-	wsOpClose  = 0x8
-	wsOpPing   = 0x9
-	wsOpPong   = 0xA
+	wsOpContinuation = 0x0
+	wsOpText         = 0x1
+	wsOpBinary       = 0x2
+	wsOpClose        = 0x8
+	wsOpPing         = 0x9
+	wsOpPong         = 0xA
 )
 
-func wsReadFrame(r io.Reader) (byte, []byte, error) {
+func wsReadFrame(r io.Reader) (bool, byte, []byte, error) {
 	hdr := make([]byte, 2)
 	if _, err := io.ReadFull(r, hdr); err != nil {
-		return 0, nil, err
+		return false, 0, nil, err
 	}
+	fin := (hdr[0] & 0x80) != 0
 	opcode := hdr[0] & 0x0F
 	masked := (hdr[1] & 0x80) != 0
 	payloadLen := uint64(hdr[1] & 0x7F)
@@ -115,32 +118,32 @@ func wsReadFrame(r io.Reader) (byte, []byte, error) {
 	if payloadLen == 126 {
 		ext := make([]byte, 2)
 		if _, err := io.ReadFull(r, ext); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 		payloadLen = uint64(binary.BigEndian.Uint16(ext))
 	} else if payloadLen == 127 {
 		ext := make([]byte, 8)
 		if _, err := io.ReadFull(r, ext); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 		payloadLen = binary.BigEndian.Uint64(ext)
 	}
 
 	if payloadLen > 32<<20 {
-		return 0, nil, fmt.Errorf("ws payload too large: %d", payloadLen)
+		return false, 0, nil, fmt.Errorf("ws payload too large: %d", payloadLen)
 	}
 
 	var maskKey []byte
 	if masked {
 		maskKey = make([]byte, 4)
 		if _, err := io.ReadFull(r, maskKey); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 	}
 
 	payload := make([]byte, payloadLen)
 	if _, err := io.ReadFull(r, payload); err != nil {
-		return 0, nil, err
+		return false, 0, nil, err
 	}
 
 	if masked {
@@ -149,7 +152,7 @@ func wsReadFrame(r io.Reader) (byte, []byte, error) {
 		}
 	}
 
-	return opcode, payload, nil
+	return fin, opcode, payload, nil
 }
 
 func wsWriteFrame(w io.Writer, masked bool, opcode byte, payload []byte) error {
@@ -192,19 +195,22 @@ func wsWriteFrame(w io.Writer, masked bool, opcode byte, payload []byte) error {
 	return err
 }
 
+// wsReadMessage reassembles continuation frames until FIN=true.
 func wsReadMessage(r io.Reader, w io.Writer, writeMu *sync.Mutex, isClient bool) ([]byte, error) {
+	var msgBuf []byte
+
 	for {
-		opcode, payload, err := wsReadFrame(r)
+		fin, opcode, payload, err := wsReadFrame(r)
 		if err != nil {
 			return nil, err
 		}
+
 		switch opcode {
-		case wsOpText, wsOpBinary:
-			return payload, nil
 		case wsOpPing:
 			writeMu.Lock()
 			_ = wsWriteFrame(w, isClient, wsOpPong, payload)
 			writeMu.Unlock()
+			continue
 		case wsOpPong:
 			continue
 		case wsOpClose:
@@ -212,8 +218,21 @@ func wsReadMessage(r io.Reader, w io.Writer, writeMu *sync.Mutex, isClient bool)
 			_ = wsWriteFrame(w, isClient, wsOpClose, nil)
 			writeMu.Unlock()
 			return nil, io.EOF
+		case wsOpText, wsOpBinary:
+			msgBuf = append(msgBuf[:0], payload...)
+		case wsOpContinuation:
+			msgBuf = append(msgBuf, payload...)
 		default:
 			continue
+		}
+
+		if fin {
+			if len(msgBuf) == 0 {
+				continue
+			}
+			result := make([]byte, len(msgBuf))
+			copy(result, msgBuf)
+			return result, nil
 		}
 	}
 }
@@ -460,6 +479,7 @@ func dialRelay(rawAddr string) (ControlConn, string, error) {
 // Config describes one tunnel session.
 type Config struct {
 	RelayAddr   string // host:port or URL of the relay (e.g. "my-relay.onrender.com", "1.2.3.4:7000")
+	Secret      string // static hex auth key from relay startup logs
 	Subdomain   string // desired subdomain; empty = let relay assign one
 	LocalTarget string // e.g. "http://127.0.0.1:3000"
 	InjectCORS  bool   // add permissive CORS headers to every response
@@ -500,7 +520,11 @@ func (c *Client) Start(cfg Config) (string, error) {
 	c.stopped = false
 	c.mu.Unlock()
 
-	if err := ctrl.WriteEnvelope(Envelope{Type: "register", Subdomain: cfg.Subdomain}); err != nil {
+	if err := ctrl.WriteEnvelope(Envelope{
+		Type:      "register",
+		Subdomain: cfg.Subdomain,
+		Secret:    cfg.Secret,
+	}); err != nil {
 		ctrl.Close()
 		return "", fmt.Errorf("failed to send registration: %w", err)
 	}
@@ -573,6 +597,7 @@ func (c *Client) serveLoop(ctrl ControlConn, cfg Config, rt *RouteTable) {
 }
 
 func (c *Client) handleRequest(e Envelope, cfg Config, rt *RouteTable, send func(Envelope) error) {
+	start := time.Now()
 	origin := "*"
 	if vals, ok := e.Headers["Origin"]; ok && len(vals) > 0 && vals[0] != "" {
 		origin = vals[0]
@@ -589,7 +614,7 @@ func (c *Client) handleRequest(e Envelope, cfg Config, rt *RouteTable, send func
 		if origin != "*" {
 			headers["Access-Control-Allow-Credentials"] = []string{"true"}
 		}
-		c.logf("%s %s -> 204 (CORS preflight handled)", e.Method, e.Path)
+		c.logf("REQ|%s|%s|204|cors-preflight|%s", e.Method, e.Path, time.Since(start).Round(time.Millisecond))
 		send(Envelope{
 			Type:    "response",
 			ID:      e.ID,
@@ -614,8 +639,9 @@ func (c *Client) handleRequest(e Envelope, cfg Config, rt *RouteTable, send func
 	}
 
 	resp, err := c.httpProxy.Do(req)
+	dur := time.Since(start).Round(time.Millisecond).String()
 	if err != nil {
-		c.logf("local request failed: %v", err)
+		c.logf("REQ|%s|%s|502|unreachable|%s", e.Method, e.Path, dur)
 		errHeaders := map[string][]string{}
 		if cfg.InjectCORS {
 			errHeaders["Access-Control-Allow-Origin"] = []string{origin}
@@ -647,7 +673,7 @@ func (c *Client) handleRequest(e Envelope, cfg Config, rt *RouteTable, send func
 		}
 	}
 
-	c.logf("%s %s -> %d", e.Method, e.Path, resp.StatusCode)
+	c.logf("REQ|%s|%s|%d|%s|%s", e.Method, e.Path, resp.StatusCode, destURL, dur)
 
 	send(Envelope{
 		Type:    "response",

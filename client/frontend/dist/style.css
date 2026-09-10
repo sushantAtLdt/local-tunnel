@@ -385,7 +385,8 @@ label.toggle {
 .m-DELETE  { color: #f85149; background: rgba(248,81,73,0.12);  }
 .m-HEAD    { color: #39d353; background: rgba(57,211,83,0.12);  }
 .m-OPTIONS { color: #bc8cff; background: rgba(188,140,255,0.12);}
-.m-SYS     { color: var(--muted2); background: transparent;    }
+.m-SYS     { color: #58a6ff; background: rgba(88,166,255,0.15); border: 1px solid rgba(88,166,255,0.3); }
+.m-ERR     { color: #f85149; background: rgba(248,81,73,0.18); border: 1px solid rgba(248,81,73,0.35); }
 
 /* path */
 .lc-path {
@@ -398,8 +399,10 @@ label.toggle {
   padding-right: 6px;
   cursor: default;
 }
-.r-sys .lc-path { font-family: inherit; color: var(--muted); font-size: 11.5px; }
-.r-err .lc-path { color: #e08080; }
+.r-sys { background: rgba(88,166,255,0.03); }
+.r-sys .lc-path { font-family: inherit; color: #a5d6ff; font-size: 11.5px; }
+.r-err { background: rgba(248,81,73,0.07); border-left: 2px solid #f85149; }
+.r-err .lc-path { color: #ff7b72; font-weight: 500; }
 
 /* upstream */
 .lc-up {

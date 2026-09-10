@@ -155,9 +155,10 @@ function appendRow(kind, cells) {
     bumpBadge();
   } else {
     // System / error — span all remaining columns
+    const isErr = kind === "err";
     const mEl = document.createElement("span");
-    mEl.className = "method m-SYS";
-    mEl.textContent = kind === "err" ? "ERR" : "SYS";
+    mEl.className = "method " + (isErr ? "m-ERR" : "m-SYS");
+    mEl.textContent = isErr ? "ERR" : "SYS";
 
     const pEl = document.createElement("span");
     pEl.className = "lc-path";
@@ -244,33 +245,43 @@ lanBtn.addEventListener("click", async () => {
 });
 
 // ── Public tunnel mode ───────────────────────────────────────
-const relayInput = document.getElementById("relayAddr");
-const subInput   = document.getElementById("subdomain");
-const pubCors    = document.getElementById("pubCors");
-const pubBtn     = document.getElementById("pubBtn");
-const pubDot     = document.getElementById("pubDot");
-const pubUrlPill = document.getElementById("pubUrlPill");
-const pubUrl     = document.getElementById("pubUrl");
+const relayInput  = document.getElementById("relayAddr");
+const secretInput = document.getElementById("relaySecret");
+const subInput    = document.getElementById("subdomain");
+const pubCors     = document.getElementById("pubCors");
+const pubBtn      = document.getElementById("pubBtn");
+const pubDot      = document.getElementById("pubDot");
+const pubUrlPill  = document.getElementById("pubUrlPill");
+const pubUrl      = document.getElementById("pubUrl");
 let pubActive = false;
+
+if (secretInput) {
+  secretInput.value = localStorage.getItem("localtunnel_auth_key") || "";
+}
 
 pubBtn.addEventListener("click", async () => {
   if (!pubActive) {
     const relayAddr   = relayInput.value.trim();
+    const secret      = secretInput ? secretInput.value.trim() : "";
     const localTarget = getLocalTarget();
     const subdomain   = subInput.value.trim();
     if (!relayAddr || !localTarget) {
       handleLog("relay address and local app address are required", true); return;
     }
+    if (secretInput) {
+      localStorage.setItem("localtunnel_auth_key", secret);
+    }
     pubBtn.disabled = true;
     try {
       const assigned = await window.go.main.App.StartTunnel(
-        relayAddr, subdomain, localTarget, pubCors.checked
+        relayAddr, secret, subdomain, localTarget, pubCors.checked
       );
       pubActive = true;
       pubDot.classList.add("live");
       pubBtn.textContent = "Stop public tunnel";
       pubBtn.classList.add("stop");
       relayInput.disabled = subInput.disabled = pubCors.disabled = true;
+      if (secretInput) secretInput.disabled = true;
       setTargetInputsDisabled(true);
       pubUrl.textContent = assigned;
       pubUrlPill.classList.remove("hidden");
@@ -291,6 +302,7 @@ pubBtn.addEventListener("click", async () => {
     pubBtn.textContent = "Start public tunnel";
     pubBtn.classList.remove("stop");
     relayInput.disabled = subInput.disabled = pubCors.disabled = false;
+    if (secretInput) secretInput.disabled = false;
     if (!lanActive) setTargetInputsDisabled(false);
     pubUrlPill.classList.add("hidden");
     handleLog("Public tunnel stopped");

@@ -7,8 +7,10 @@
 //     connections and public HTTP traffic on the same port ($PORT or :8080).
 //  2. Dual-port mode (traditional VPS): accepts plain TCP control connections
 //     on :7000 and public HTTP traffic on :8080.
-//  3. Cloud health checks (/healthz, /health, and friendly status page).
-//  4. Subdomain & cloud routing (wildcard DNS, /t/<subdomain>/ path prefix,
+//  3. Static Hex Authentication Key: generates/reads a static hex secret and prints
+//     it to startup logs; required by clients to register tunnels.
+//  4. Cloud health checks (/healthz, /health, and friendly status page).
+//  5. Subdomain & cloud routing (wildcard DNS, /t/<subdomain>/ path prefix,
 //     X-Tunnel header, ?_tunnel= query param, or single-tunnel auto-routing).
 //
 // Build:   go build -o relay main.go
@@ -22,6 +24,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -41,6 +44,7 @@ type Envelope struct {
 	ID        string              `json:"id,omitempty"`
 	Subdomain string              `json:"subdomain,omitempty"`
 	URL       string              `json:"url,omitempty"`
+	Secret    string              `json:"secret,omitempty"` // static hex auth key
 	Method    string              `json:"method,omitempty"`
 	Path      string              `json:"path,omitempty"`
 	Headers   map[string][]string `json:"headers,omitempty"`
@@ -123,11 +127,12 @@ const (
 	wsGUID           = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 )
 
-func wsReadFrame(r io.Reader) (byte, []byte, error) {
+func wsReadFrame(r io.Reader) (bool, byte, []byte, error) {
 	hdr := make([]byte, 2)
 	if _, err := io.ReadFull(r, hdr); err != nil {
-		return 0, nil, err
+		return false, 0, nil, err
 	}
+	fin := (hdr[0] & 0x80) != 0
 	opcode := hdr[0] & 0x0F
 	masked := (hdr[1] & 0x80) != 0
 	payloadLen := uint64(hdr[1] & 0x7F)
@@ -135,32 +140,32 @@ func wsReadFrame(r io.Reader) (byte, []byte, error) {
 	if payloadLen == 126 {
 		ext := make([]byte, 2)
 		if _, err := io.ReadFull(r, ext); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 		payloadLen = uint64(binary.BigEndian.Uint16(ext))
 	} else if payloadLen == 127 {
 		ext := make([]byte, 8)
 		if _, err := io.ReadFull(r, ext); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 		payloadLen = binary.BigEndian.Uint64(ext)
 	}
 
 	if payloadLen > 32<<20 {
-		return 0, nil, fmt.Errorf("ws payload too large: %d", payloadLen)
+		return false, 0, nil, fmt.Errorf("ws payload too large: %d", payloadLen)
 	}
 
 	var maskKey []byte
 	if masked {
 		maskKey = make([]byte, 4)
 		if _, err := io.ReadFull(r, maskKey); err != nil {
-			return 0, nil, err
+			return false, 0, nil, err
 		}
 	}
 
 	payload := make([]byte, payloadLen)
 	if _, err := io.ReadFull(r, payload); err != nil {
-		return 0, nil, err
+		return false, 0, nil, err
 	}
 
 	if masked {
@@ -169,7 +174,7 @@ func wsReadFrame(r io.Reader) (byte, []byte, error) {
 		}
 	}
 
-	return opcode, payload, nil
+	return fin, opcode, payload, nil
 }
 
 func wsWriteFrame(w io.Writer, masked bool, opcode byte, payload []byte) error {
@@ -212,19 +217,22 @@ func wsWriteFrame(w io.Writer, masked bool, opcode byte, payload []byte) error {
 	return err
 }
 
+// wsReadMessage reassembles fragmented frames (continuation frames) until FIN=true.
 func wsReadMessage(r io.Reader, w io.Writer, writeMu *sync.Mutex, isClient bool) ([]byte, error) {
+	var msgBuf []byte
+
 	for {
-		opcode, payload, err := wsReadFrame(r)
+		fin, opcode, payload, err := wsReadFrame(r)
 		if err != nil {
 			return nil, err
 		}
+
 		switch opcode {
-		case wsOpText, wsOpBinary:
-			return payload, nil
 		case wsOpPing:
 			writeMu.Lock()
 			_ = wsWriteFrame(w, isClient, wsOpPong, payload)
 			writeMu.Unlock()
+			continue
 		case wsOpPong:
 			continue
 		case wsOpClose:
@@ -232,8 +240,21 @@ func wsReadMessage(r io.Reader, w io.Writer, writeMu *sync.Mutex, isClient bool)
 			_ = wsWriteFrame(w, isClient, wsOpClose, nil)
 			writeMu.Unlock()
 			return nil, io.EOF
+		case wsOpText, wsOpBinary:
+			msgBuf = append(msgBuf[:0], payload...)
+		case wsOpContinuation:
+			msgBuf = append(msgBuf, payload...)
 		default:
 			continue
+		}
+
+		if fin {
+			if len(msgBuf) == 0 {
+				continue
+			}
+			result := make([]byte, len(msgBuf))
+			copy(result, msgBuf)
+			return result, nil
 		}
 	}
 }
@@ -343,7 +364,6 @@ func (r *registry) count() int {
 	return len(r.byName)
 }
 
-// getOnly returns the active tunnel if exactly one tunnel is registered.
 func (r *registry) getOnly() (*tunnel, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -361,15 +381,55 @@ func randomSubdomain() string {
 	return strings.ToLower(base64.RawURLEncoding.EncodeToString(b))
 }
 
+// ── Authentication Secret Initialization ────────────────────────────────────
+
+func getOrInitSecret(cliSecret string) string {
+	if cliSecret != "" {
+		return strings.TrimSpace(cliSecret)
+	}
+	if env := os.Getenv("RELAY_SECRET"); env != "" {
+		return strings.TrimSpace(env)
+	}
+	if env := os.Getenv("AUTH_KEY"); env != "" {
+		return strings.TrimSpace(env)
+	}
+
+	secretFile := ".relay_secret"
+	if data, err := os.ReadFile(secretFile); err == nil {
+		s := strings.TrimSpace(string(data))
+		if len(s) >= 8 {
+			return s
+		}
+	}
+
+	// Generate 16 random bytes (32 hex characters)
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatalf("failed to generate random secret: %v", err)
+	}
+	s := hex.EncodeToString(b)
+	_ = os.WriteFile(secretFile, []byte(s+"\n"), 0600)
+	return s
+}
+
 // ── Control connection lifecycle ───────────────────────────────────────────
 
-func handleControl(ctrl ControlConn, reg *registry, requestHost, baseDomain string, isHTTPS bool) {
+func handleControl(ctrl ControlConn, reg *registry, requestHost, baseDomain, relaySecret string, isHTTPS bool) {
 	defer ctrl.Close()
 
 	first, err := ctrl.ReadEnvelope()
 	if err != nil || first.Type != "register" {
 		ctrl.WriteEnvelope(Envelope{Type: "error", Message: "expected register frame first"})
 		return
+	}
+
+	// Authenticate client using hex secret key
+	if relaySecret != "" {
+		if first.Secret != relaySecret {
+			log.Printf("tunnel registration rejected: invalid auth key")
+			ctrl.WriteEnvelope(Envelope{Type: "error", Message: "unauthorized: invalid or missing relay auth key"})
+			return
+		}
 	}
 
 	name := strings.ToLower(strings.TrimSpace(first.Subdomain))
@@ -426,7 +486,7 @@ func handleControl(ctrl ControlConn, reg *registry, requestHost, baseDomain stri
 	}
 }
 
-func handleWebSocketControl(w http.ResponseWriter, r *http.Request, reg *registry, baseDomain string) {
+func handleWebSocketControl(w http.ResponseWriter, r *http.Request, reg *registry, baseDomain, relaySecret string) {
 	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		http.Error(w, "expected websocket upgrade", http.StatusBadRequest)
 		return
@@ -468,10 +528,10 @@ func handleWebSocketControl(w http.ResponseWriter, r *http.Request, reg *registr
 	wsConn.startPingLoop(25 * time.Second)
 
 	isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-	handleControl(wsConn, reg, r.Host, baseDomain, isHTTPS)
+	handleControl(wsConn, reg, r.Host, baseDomain, relaySecret, isHTTPS)
 }
 
-func runControlServer(addr string, reg *registry, baseDomain string) {
+func runControlServer(addr string, reg *registry, baseDomain, relaySecret string) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("control listen: %v", err)
@@ -487,7 +547,7 @@ func runControlServer(addr string, reg *registry, baseDomain string) {
 			conn: conn,
 			br:   bufio.NewReader(conn),
 		}
-		go handleControl(tcpConn, reg, "", baseDomain, false)
+		go handleControl(tcpConn, reg, "", baseDomain, relaySecret, false)
 	}
 }
 
@@ -502,7 +562,7 @@ func subdomainFromHost(host, baseDomain string) string {
 	return parts[0]
 }
 
-func runPublicServer(addr string, reg *registry, baseDomain string) {
+func runPublicServer(addr string, reg *registry, baseDomain, relaySecret string) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		// 1. Health check endpoints for cloud providers (Render, Koyeb, Railway, etc.)
 		if r.URL.Path == "/healthz" || r.URL.Path == "/health" {
@@ -513,7 +573,7 @@ func runPublicServer(addr string, reg *registry, baseDomain string) {
 
 		// 2. Control connection over WebSocket on public port
 		if r.URL.Path == "/_control" || (r.Header.Get("Upgrade") == "websocket" && (r.URL.Path == "/" || r.URL.Path == "/_control")) {
-			handleWebSocketControl(w, r, reg, baseDomain)
+			handleWebSocketControl(w, r, reg, baseDomain, relaySecret)
 			return
 		}
 
@@ -657,16 +717,23 @@ func main() {
 	publicAddr := flag.String("public", defaultPublic, "address for public HTTP traffic and WebSocket control")
 	controlAddr := flag.String("control", defaultControl, "address for tunnel client control connections (raw TCP; empty for single-port mode)")
 	baseDomain := flag.String("domain", "", "base domain for subdomain routing, e.g. tunnel.example.com")
+	authSecret := flag.String("secret", "", "static hex authentication secret required to register tunnels (or set RELAY_SECRET / AUTH_KEY)")
 	flag.Parse()
+
+	secretKey := getOrInitSecret(*authSecret)
+	fmt.Println("============================================================")
+	fmt.Printf("LOCAL TUNNEL RELAY AUTH KEY (HEX SECRET):\n  %s\n", secretKey)
+	fmt.Println("Enter this Auth Key in your client app to connect.")
+	fmt.Println("============================================================")
 
 	reg := newRegistry()
 
 	// Start raw TCP control server only if configured and different from public port
 	if *controlAddr != "" && *controlAddr != *publicAddr {
-		go runControlServer(*controlAddr, reg, *baseDomain)
+		go runControlServer(*controlAddr, reg, *baseDomain, secretKey)
 	} else {
 		log.Printf("running in single-port mode on %s", *publicAddr)
 	}
 
-	runPublicServer(*publicAddr, reg, *baseDomain)
+	runPublicServer(*publicAddr, reg, *baseDomain, secretKey)
 }

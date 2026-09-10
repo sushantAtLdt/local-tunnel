@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -116,16 +117,16 @@ func TestHealthCheckAndStatusPage(t *testing.T) {
 	}
 }
 
-func TestSinglePortWebSocketTunnel(t *testing.T) {
+func TestSinglePortWebSocketTunnelWithAuth(t *testing.T) {
 	reg := newRegistry()
+	testSecret := "abc1234567890def"
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/_control" || r.Header.Get("Upgrade") == "websocket" {
-			handleWebSocketControl(w, r, reg, "")
+			handleWebSocketControl(w, r, reg, "", testSecret)
 			return
 		}
 
-		// Routing logic matching runPublicServer
 		var targetSubdomain string
 		if strings.HasPrefix(r.URL.Path, "/t/") {
 			rest := strings.TrimPrefix(r.URL.Path, "/t/")
@@ -173,17 +174,41 @@ func TestSinglePortWebSocketTunnel(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	// Connect client via WebSocket to server.URL/_control
+	// 1. Try to register with invalid secret
+	clientConnBad, err := wsClientDial(server.URL)
+	if err != nil {
+		t.Fatalf("ws dial failed: %v", err)
+	}
+	defer clientConnBad.Close()
+
+	err = clientConnBad.WriteEnvelope(Envelope{
+		Type:      "register",
+		Subdomain: "mytest",
+		Secret:    "wrong-secret",
+	})
+	if err != nil {
+		t.Fatalf("bad register write failed: %v", err)
+	}
+
+	ackBad, err := clientConnBad.ReadEnvelope()
+	if err != nil {
+		t.Fatalf("bad read ack failed: %v", err)
+	}
+	if ackBad.Type != "error" || !strings.Contains(ackBad.Message, "unauthorized") {
+		t.Fatalf("expected unauthorized error, got: %+v", ackBad)
+	}
+
+	// 2. Register with correct secret
 	clientConn, err := wsClientDial(server.URL)
 	if err != nil {
 		t.Fatalf("ws dial failed: %v", err)
 	}
 	defer clientConn.Close()
 
-	// Register tunnel
 	err = clientConn.WriteEnvelope(Envelope{
 		Type:      "register",
 		Subdomain: "mytest",
+		Secret:    testSecret,
 	})
 	if err != nil {
 		t.Fatalf("register write failed: %v", err)
@@ -197,7 +222,7 @@ func TestSinglePortWebSocketTunnel(t *testing.T) {
 		t.Fatalf("unexpected ack: %+v", ack)
 	}
 
-	// Now client listens for requests in goroutine
+	// 3. Client responds to requests
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -212,19 +237,17 @@ func TestSinglePortWebSocketTunnel(t *testing.T) {
 			return
 		}
 
-		// Send response
 		err = clientConn.WriteEnvelope(Envelope{
 			Type:   "response",
 			ID:     reqEnv.ID,
 			Status: 200,
-			Body:   "hello from local client",
+			Body:   "hello from authenticated client",
 		})
 		if err != nil {
 			t.Errorf("client write resp failed: %v", err)
 		}
 	}()
 
-	// Send public HTTP request to server.URL/api/hello (tests single-tunnel auto-routing!)
 	resp, err := http.Get(server.URL + "/api/hello")
 	if err != nil {
 		t.Fatalf("public get failed: %v", err)
@@ -233,9 +256,99 @@ func TestSinglePortWebSocketTunnel(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if string(body) != "hello from local client" {
+	if string(body) != "hello from authenticated client" {
 		t.Fatalf("unexpected body: %q", string(body))
 	}
 
 	wg.Wait()
+}
+
+func TestFragmentedWebSocketFrames(t *testing.T) {
+	// Tests RFC 6455 frame reassembly where fin=false followed by continuation frame
+	reg := newRegistry()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleWebSocketControl(w, r, reg, "", "")
+	}))
+	defer server.Close()
+
+	// Connect raw TCP to emulate fragmented proxy frames
+	u, _ := url.Parse(server.URL)
+	conn, err := net.Dial("tcp", u.Host)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	keyBytes := make([]byte, 16)
+	rand.Read(keyBytes)
+	key := base64.StdEncoding.EncodeToString(keyBytes)
+
+	req := fmt.Sprintf("GET /_control HTTP/1.1\r\n"+
+		"Host: %s\r\n"+
+		"Upgrade: websocket\r\n"+
+		"Connection: Upgrade\r\n"+
+		"Sec-WebSocket-Key: %s\r\n"+
+		"Sec-WebSocket-Version: 13\r\n\r\n", u.Host, key)
+	conn.Write([]byte(req))
+
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, &http.Request{Method: "GET"})
+	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("handshake failed: %v, status: %d", err, resp.StatusCode)
+	}
+
+	// Prepare registration JSON
+	msgData, _ := json.Marshal(Envelope{
+		Type:      "register",
+		Subdomain: "fragmented",
+	})
+
+	// Split msgData in half
+	half := len(msgData) / 2
+	part1 := msgData[:half]
+	part2 := msgData[half:]
+
+	// Write frame 1: FIN=0, Opcode=Binary (0x2), masked
+	mask1 := []byte{1, 2, 3, 4}
+	maskedPart1 := make([]byte, len(part1))
+	for i := range part1 {
+		maskedPart1[i] = part1[i] ^ mask1[i%4]
+	}
+	frame1Hdr := []byte{
+		0x02,                     // FIN=0, Opcode=0x2
+		0x80 | byte(len(part1)), // MASK=1, len
+	}
+	conn.Write(frame1Hdr)
+	conn.Write(mask1)
+	conn.Write(maskedPart1)
+
+	// Write frame 2: FIN=1, Opcode=Continuation (0x0), masked
+	mask2 := []byte{5, 6, 7, 8}
+	maskedPart2 := make([]byte, len(part2))
+	for i := range part2 {
+		maskedPart2[i] = part2[i] ^ mask2[i%4]
+	}
+	frame2Hdr := []byte{
+		0x80 | 0x00,              // FIN=1, Opcode=0x0
+		0x80 | byte(len(part2)), // MASK=1, len
+	}
+	conn.Write(frame2Hdr)
+	conn.Write(mask2)
+	conn.Write(maskedPart2)
+
+	// Server should reassemble both frames into the complete registration envelope!
+	wsClient := &wsControlConn{
+		conn:     conn,
+		br:       br,
+		isClient: true,
+		closed:   make(chan struct{}),
+	}
+	ack, err := wsClient.ReadEnvelope()
+	if err != nil {
+		t.Fatalf("server failed to read reassembled frame: %v", err)
+	}
+	if ack.Type != "registered" || ack.Subdomain != "fragmented" {
+		t.Fatalf("unexpected ack: %+v", ack)
+	}
 }

@@ -30,8 +30,8 @@ func (a *App) startup(ctx context.Context) {
 }
 
 // StartTunnel begins forwarding relayAddr <-> localTarget under the given
-// subdomain (empty = relay picks one). Returns the assigned subdomain.
-func (a *App) StartTunnel(relayAddr, subdomain, localTarget string, injectCORS bool) (string, error) {
+// subdomain (empty = relay picks one). Returns the assigned public URL or subdomain.
+func (a *App) StartTunnel(relayAddr, secret, subdomain, localTarget string, injectCORS bool) (string, error) {
 	a.mu.Lock()
 	if a.active {
 		a.mu.Unlock()
@@ -46,6 +46,7 @@ func (a *App) StartTunnel(relayAddr, subdomain, localTarget string, injectCORS b
 
 	assigned, err := c.Start(backend.Config{
 		RelayAddr:   relayAddr,
+		Secret:      secret,
 		Subdomain:   subdomain,
 		LocalTarget: localTarget,
 		InjectCORS:  injectCORS,
