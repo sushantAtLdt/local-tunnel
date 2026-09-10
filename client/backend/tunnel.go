@@ -321,6 +321,12 @@ func dialRelay(rawAddr string) (ControlConn, string, error) {
 		return nil, "", fmt.Errorf("relay address cannot be empty")
 	}
 
+	// Clean up common user input variations like tcp///..., trailing slashes
+	for strings.Contains(addr, "///") {
+		addr = strings.ReplaceAll(addr, "///", "://")
+	}
+	addr = strings.TrimRight(addr, "/")
+
 	useTLS := false
 	useWS := false
 	useTCP := false
@@ -345,16 +351,21 @@ func dialRelay(rawAddr string) (ControlConn, string, error) {
 		addr = addr[6:]
 	}
 
-	// If no scheme specified:
-	if !useWS && !useTCP {
+	// Check if this is a known cloud PaaS domain (Render, Koyeb, Railway, Fly)
+	isCloudDomain := strings.Contains(strings.ToLower(addr), "onrender.com") ||
+		strings.Contains(strings.ToLower(addr), "koyeb.app") ||
+		strings.Contains(strings.ToLower(addr), "railway.app") ||
+		strings.Contains(strings.ToLower(addr), "fly.dev")
+
+	if isCloudDomain {
+		// Cloud domains always use HTTPS/TLS WebSocket on port 443 externally
+		useTLS = true
+		useWS = true
+		useTCP = false
+	} else if !useWS && !useTCP {
 		if strings.HasSuffix(addr, ":7000") {
 			useTCP = true
-		} else if strings.Contains(addr, "onrender.com") || strings.Contains(addr, "koyeb.app") ||
-			strings.Contains(addr, "railway.app") || strings.Contains(addr, "fly.dev") || strings.HasSuffix(addr, ":443") {
-			useTLS = true
-			useWS = true
-		} else if !strings.Contains(addr, ":") {
-			// Bare domain e.g. "tunnel.example.com"
+		} else if strings.HasSuffix(addr, ":443") || !strings.Contains(addr, ":") {
 			useTLS = true
 			useWS = true
 		} else if strings.HasSuffix(addr, ":80") {
@@ -386,7 +397,12 @@ func dialRelay(rawAddr string) (ControlConn, string, error) {
 		path = "/_control"
 	}
 
-	if port == "" {
+	if isCloudDomain {
+		// External cloud traffic is always port 443 HTTPS. Override any container-internal ports like 8080/7000/10000.
+		if port == "" || port == "8080" || port == "7000" || port == "10000" || port == "8000" {
+			port = "443"
+		}
+	} else if port == "" {
 		if useTLS {
 			port = "443"
 		} else {

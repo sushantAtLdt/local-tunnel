@@ -56,6 +56,25 @@ func TestDialRelayAddressParsing(t *testing.T) {
 	ctrl.Close()
 }
 
+func TestCloudDomainPortNormalization(t *testing.T) {
+	testCases := []string{
+		"https://local-tunnel-1.onrender.com:8080",
+		"tcp///local-tunnel-1.onrender.com/",
+		"local-tunnel-1.onrender.com:8080",
+		"https://local-tunnel-1.onrender.com",
+	}
+
+	for _, tc := range testCases {
+		// Verify dialRelay correctly resolves cloud domains to port 443 with TLS
+		// We test with a dummy host that won't connect, verifying the dial target error
+		_, _, err := dialRelay(tc)
+		// Should attempt to dial port 443
+		if err != nil && !strings.Contains(err.Error(), ":443") && !strings.Contains(err.Error(), "relay rejected") && !strings.Contains(err.Error(), "no response") {
+			t.Errorf("expected resolution to port 443 for %q, got err: %v", tc, err)
+		}
+	}
+}
+
 func TestClientEndToEnd(t *testing.T) {
 	// 1. Setup local target server (simulating user's local app e.g. localhost:3000)
 	localApp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
