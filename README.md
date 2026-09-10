@@ -126,7 +126,41 @@ Open two ports in your VPS firewall: `8080` (public traffic) and `7000`
 (tunnel clients — keep this one restricted to your own IP if you can, since
 anyone who can reach it can register a tunnel).
 
+### Option C — Free Cloud Hosting (Render, Koyeb, Railway, Fly.io) [Single Port]
+
+Platforms like **Render**, **Koyeb**, **Railway**, and **Fly.io** only allow a **single public port** per web service (set dynamically via the `PORT` environment variable) and route all external traffic through their HTTPS edge proxy.
+
+The relay natively supports this via **single-port WebSocket multiplexing**:
+- Automatically reads the `PORT` environment variable and binds to it.
+- Multiplexes control connections (via secure WebSockets `/_control`) and public HTTP requests over the exact same port.
+- Built-in `/healthz` and `/health` endpoints ensure cloud health checks pass immediately on startup.
+- Automatically sends 25-second WebSocket ping keepalives so Render/Koyeb never drop the connection during idle periods.
+
+#### Deploying on Render:
+1. Click **New +** → **Web Service** on [render.com](https://render.com).
+2. Connect your repository.
+3. Set **Root Directory** to `relay`.
+4. Set **Runtime** to `Docker`.
+5. Render automatically sets `PORT` and gives you a free URL like `https://your-relay.onrender.com`.
+
+#### Deploying on Koyeb:
+1. Create a new Service on [koyeb.com](https://koyeb.com).
+2. Select **GitHub** deployment and pick this repository.
+3. Set the work directory to `relay` (or point to `relay/Dockerfile`).
+4. Koyeb gives you a URL like `https://your-app.koyeb.app`.
+
+#### Connecting the Desktop Client:
+In the LocalTunnel desktop app:
+1. In the **Relay address** field, paste your cloud URL:
+   - `your-relay.onrender.com` (or `https://your-relay.onrender.com`)
+   - or `your-app.koyeb.app`
+2. Click **Start public tunnel**.
+3. The client automatically connects over TLS WebSocket (`wss://`) on port 443!
+
+> **Routing on free cloud domains:** Free `.onrender.com` and `.koyeb.app` domains do not support wildcard subdomains. LocalTunnel automatically routes all incoming requests to your active tunnel when a single tunnel is running. If multiple tunnels are connected to the same relay, traffic can be routed via `/t/<subdomain>/...` path prefix or `X-Tunnel: <subdomain>` header. Custom domains with wildcard DNS are also fully supported with `-domain yourdomain.com`.
+
 ### Getting a real `https://myapp.yourdomain.com` URL
+
 
 1. Point a **wildcard DNS record** at your VPS: `*.tunnel.yourdomain.com A <vps-ip>`
 2. Run the relay with `-domain tunnel.yourdomain.com` (add it to the

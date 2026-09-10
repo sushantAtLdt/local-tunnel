@@ -10,4 +10,5 @@ FROM scratch
 COPY --from=build /relay /relay
 EXPOSE 8080 7000
 ENTRYPOINT ["/relay"]
-CMD ["-public", ":8080", "-control", ":7000"]
+CMD []
+

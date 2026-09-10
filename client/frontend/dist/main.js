@@ -274,7 +274,11 @@ pubBtn.addEventListener("click", async () => {
       setTargetInputsDisabled(true);
       pubUrl.textContent = assigned;
       pubUrlPill.classList.remove("hidden");
-      handleLog("Public tunnel live — subdomain: " + assigned);
+      if (assigned.startsWith("http://") || assigned.startsWith("https://")) {
+        handleLog("Public tunnel live → " + assigned);
+      } else {
+        handleLog("Public tunnel live — subdomain: " + assigned);
+      }
     } catch (err) {
       handleLog(String(err), true);
     } finally {
@@ -293,5 +297,23 @@ pubBtn.addEventListener("click", async () => {
   }
 });
 
+// Click-to-copy for URL pills
+pubUrlPill.addEventListener("click", () => {
+  const text = pubUrl.textContent;
+  if (text && text !== "—") {
+    navigator.clipboard?.writeText(text);
+    handleLog("Copied to clipboard: " + text);
+  }
+});
+
+lanUrlPill.addEventListener("click", () => {
+  const text = lanUrl.textContent;
+  if (text && text !== "—") {
+    navigator.clipboard?.writeText(text);
+    handleLog("Copied to clipboard: " + text);
+  }
+});
+
 // ── Wails event ──────────────────────────────────────────────
 window.runtime.EventsOn("log", (line) => handleLog(line));
+
